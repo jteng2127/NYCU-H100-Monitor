@@ -143,7 +143,7 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
                 last_status_json = current_status_json
                 send_discord_notification(discord_webhook_url, "NYCU HPC 初始狀態", "", notify_message)
             if compare_status_json(last_status_json, current_status_json):
-                print(f"{current_time}：狀態未改變")
+                print(f"{current_time}：狀態未改變, 目前狀態:\n{out}")
             else:
                 print(f"{current_time}：狀態已改變, 通知中...")
                 last_status_json = current_status_json
