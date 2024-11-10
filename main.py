@@ -27,13 +27,12 @@ def run_ssh_command(hostname, port, username, password, command):
         ssh_client.close()
 
 
-def send_discord_notification(url, title, link, description):
+def send_discord_notification(url, embed: DiscordEmbed):
     webhook = DiscordWebhook(url=url)
-    embed = DiscordEmbed(title=title, description=description, color=242424)
     webhook.add_embed(embed)
     response = webhook.execute()
     if response.status_code == 200:
-        print(f"已通知：{title}")
+        print(f"已通知：{embed.title}")
     else:
         print(f"通知失敗：{response.status_code}")
 
@@ -127,17 +126,21 @@ def compare_status_json(json1, json2):
     # 比較兩個 JSON 是否相同
     return json1_copy == json2_copy
 
-def get_compact_status_message(json):
-    message = f"""Last Update: {json["Last_Update"]}
-Jobs Pending/Running: {json["Jobs"]["Pending"]}/{json["Jobs"]["Running"]}
-CPU Cores Used/Total:
+
+def get_status_embed(json, title="NYCU HPC Status"):
+    description = f"""[Last Update]: **{json["Last_Update"]}**
+[Jobs Pending/Running]: **{json["Jobs"]["Pending"]}/{json["Jobs"]["Running"]}**
 """
+    cpu_description = ""
     for node, cores in json["CPU_Cores"].items():
-        message += f"{node}: {cores['Used']}/{cores['Total']}\n"
-    message += "GPU Used/Total:\n"
+        cpu_description += f"[{node}]: **{cores['Used']}/{cores['Total']}**\n"
+    gpu_description = ""
     for node, gpu in json["GPU"].items():
-        message += f"{node}: {gpu['Used']}/{gpu['Total']}\n"
-    return message
+        gpu_description += f"[{node}]: **{gpu['Used']}/{gpu['Total']}**\n"
+    embed = DiscordEmbed(title=title, description=description, color=242424)
+    embed.add_embed_field(name="CPU Cores Used/Total", value=cpu_description)
+    embed.add_embed_field(name="GPU Used/Total", value=gpu_description)
+    return embed
 
 
 def h100_pooling(discord_webhook_url, hostname, port, username, password, interval=60):
@@ -157,21 +160,25 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
                 print(f"{current_time}：無效的 HPC 狀態:\n{out}")
                 continue
             current_status_json = parse_status_message(out)
-            notify_message = get_compact_status_message(current_status_json)
             if last_status_json is None:
                 print(f"{current_time}：首次請求, 通知中...")
                 last_status_json = current_status_json
-                send_discord_notification(
-                    discord_webhook_url, "NYCU HPC 初始狀態", "", notify_message
+                status_embed = get_status_embed(
+                    current_status_json, title="NYCU HPC Initial Status"
                 )
+                send_discord_notification(discord_webhook_url, status_embed)
             if compare_status_json(last_status_json, current_status_json):
                 print(f"{current_time}：狀態未改變, 目前狀態:\n{out}")
             else:
                 print(f"{current_time}：狀態已改變, 通知中...")
                 last_status_json = current_status_json
-                send_discord_notification(
-                    discord_webhook_url, "NYCU HPC 狀態更新", "", notify_message
+                status_embed = get_status_embed(
+                    current_status_json, title="NYCU HPC Status Updated"
                 )
+                send_discord_notification(discord_webhook_url, status_embed)
+            
+            if err:
+                print(f"{current_time}: 警告: {err}")
 
         except Exception as e:
             print(f"{current_time}: 請求失敗: {e}")
@@ -179,7 +186,8 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
                 print("通知中...")
                 last_status_json = None
                 send_discord_notification(
-                    discord_webhook_url, "NYCU HPC 狀態請求失敗", "", str(e)
+                    discord_webhook_url,
+                    DiscordEmbed(title="Cannot Fetch HPC Status", color=15158332), # red
                 )
 
         # 間隔一段時間再重新請求
