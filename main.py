@@ -132,6 +132,7 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
                 password=password,
                 command="hpcs",
             )
+            notify_message = "\n".join(out.strip().split("\n")[2:])
 
             if not is_valid_hpc_status(out):
                 print(f"{current_time}：無效的 HPC 狀態:\n{out}")
