@@ -137,6 +137,10 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
                 print(f"{current_time}：無效的 HPC 狀態:\n{out}")
                 continue
             current_status_json = parse_status_message(out)
+            if last_status_json is None:
+                print(f"{current_time}：首次請求, 通知中...")
+                last_status_json = current_status_json
+                send_discord_notification(discord_webhook_url, "NYCU HPC 初始狀態", "", out)
             if compare_status_json(last_status_json, current_status_json):
                 print(f"{current_time}：狀態未改變")
             else:
