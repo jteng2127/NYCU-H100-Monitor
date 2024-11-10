@@ -113,18 +113,38 @@ def parse_status_message(message):
 
 def compare_status_json(json1, json2):
     # 移除 Last_Update 欄位進行比較
-    json1_copy = {key: value for key, value in json1.items() if key != "Last_Update"}
-    json2_copy = {key: value for key, value in json2.items() if key != "Last_Update"}
+    json1_copy = {
+        key: value
+        for key, value in json1.items()
+        if key != "Last_Update" and key != "Jobs"
+    }
+    json2_copy = {
+        key: value
+        for key, value in json2.items()
+        if key != "Last_Update" and key != "Jobs"
+    }
 
     # 比較兩個 JSON 是否相同
     return json1_copy == json2_copy
+
+def get_compact_status_message(json):
+    message = f"""Last Update: {json["Last_Update"]}
+Jobs Pending/Running: {json["Jobs"]["Pending"]}/{json["Jobs"]["Running"]}
+CPU Cores Used/Total:
+"""
+    for node, cores in json["CPU_Cores"].items():
+        message += f"{node}: {cores['Used']}/{cores['Total']}\n"
+    message += "GPU Used/Total:\n"
+    for node, gpu in json["GPU"].items():
+        message += f"{node}: {gpu['Used']}/{gpu['Total']}\n"
+    return message
 
 
 def h100_pooling(discord_webhook_url, hostname, port, username, password, interval=60):
     last_status_json = None
     while True:
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         try:
-            current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             out, err = run_ssh_command(
                 hostname=hostname,
                 port=port,
@@ -132,25 +152,35 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
                 password=password,
                 command="hpcs",
             )
-            notify_message = "\n".join(out.strip().split("\n")[2:])
 
             if not is_valid_hpc_status(out):
                 print(f"{current_time}：無效的 HPC 狀態:\n{out}")
                 continue
             current_status_json = parse_status_message(out)
+            notify_message = get_compact_status_message(current_status_json)
             if last_status_json is None:
                 print(f"{current_time}：首次請求, 通知中...")
                 last_status_json = current_status_json
-                send_discord_notification(discord_webhook_url, "NYCU HPC 初始狀態", "", notify_message)
+                send_discord_notification(
+                    discord_webhook_url, "NYCU HPC 初始狀態", "", notify_message
+                )
             if compare_status_json(last_status_json, current_status_json):
                 print(f"{current_time}：狀態未改變, 目前狀態:\n{out}")
             else:
                 print(f"{current_time}：狀態已改變, 通知中...")
                 last_status_json = current_status_json
-                send_discord_notification(discord_webhook_url, "NYCU HPC 狀態更新", "", notify_message)
-            
+                send_discord_notification(
+                    discord_webhook_url, "NYCU HPC 狀態更新", "", notify_message
+                )
+
         except Exception as e:
-            print(f"請求失敗：{e}")
+            print(f"{current_time}: 請求失敗: {e}")
+            if last_status_json is not None:
+                print("通知中...")
+                last_status_json = None
+                send_discord_notification(
+                    discord_webhook_url, "NYCU HPC 狀態請求失敗", "", str(e)
+                )
 
         # 間隔一段時間再重新請求
         time.sleep(interval)
@@ -165,21 +195,52 @@ if __name__ == "__main__":
     password = os.getenv("SSH_PASS")
     h100_pooling(discord_webhook_url, hostname, port, username, password)
 
-#     message = """
-#     ===== NYCU HPC Status =====
+"""
+example json:
+{
+    "Last_Update": "2024-11-10 12:09:00",
+    "Jobs": {
+        "Pending": 10,
+        "Running": 7
+    },
+    "CPU_Cores": {
+        "DGX-CN01": {
+            "Used": 0,
+            "Total": 224
+        },
+        "DGX-CN02": {
+            "Used": 132,
+            "Total": 224
+        }
+    },
+    "GPU": {
+        "DGX-CN01": {
+            "Used": 0,
+            "Total": 8
+        },
+        "DGX-CN02": {
+            "Used": 8,
+            "Total": 8
+        }
+    }
+}
+"""
 
-# [ Last Update ]
-# Time: 2024-11-10 12:08:07
+"""
+example message:
+===== NYCU HPC Status =====
 
-# [ Jobs Pending/Running ]
-# Count: 9/7
+[ Last Update ]
+Time: 2024-11-10 12:08:07
 
-# [ CPU Cores Used/Total ]
-# DGX-CN01: 0/224
-# DGX-CN02: 132/224
+[ Jobs Pending/Running ]
+Count: 9/7
 
-# [ GPU Used/Total ]
-# DGX-CN01: 0/8
-# DGX-CN02: 8/8
-# """
-#     print(is_valid_hpc_status(message))
+[ CPU Cores Used/Total ]
+DGX-CN01: 0/224
+DGX-CN02: 132/224
+
+[ GPU Used/Total ]
+DGX-CN01: 0/8
+DGX-CN02: 8/8
+"""
