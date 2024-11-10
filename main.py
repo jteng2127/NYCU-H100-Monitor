@@ -141,13 +141,13 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
             if last_status_json is None:
                 print(f"{current_time}：首次請求, 通知中...")
                 last_status_json = current_status_json
-                send_discord_notification(discord_webhook_url, "NYCU HPC 初始狀態", "", out)
+                send_discord_notification(discord_webhook_url, "NYCU HPC 初始狀態", "", notify_message)
             if compare_status_json(last_status_json, current_status_json):
                 print(f"{current_time}：狀態未改變")
             else:
                 print(f"{current_time}：狀態已改變, 通知中...")
                 last_status_json = current_status_json
-                send_discord_notification(discord_webhook_url, "NYCU HPC 狀態更新", "", out)
+                send_discord_notification(discord_webhook_url, "NYCU HPC 狀態更新", "", notify_message)
             
         except Exception as e:
             print(f"請求失敗：{e}")
