@@ -4,6 +4,7 @@ import os
 import paramiko
 import time
 import re
+from datetime import datetime
 
 
 def run_ssh_command(hostname, port, username, password, command):
@@ -127,16 +128,23 @@ def compare_status_json(json1, json2):
     return json1_copy == json2_copy
 
 
-def get_status_embed(json, title="NYCU HPC Status"):
-    description = f"""[Last Update]: **{json["Last_Update"]}**
-[Jobs Pending/Running]: **{json["Jobs"]["Pending"]}/{json["Jobs"]["Running"]}**
-"""
+def get_status_embed(json, title="HPC Status"):
+    time_string = datetime.strptime(json["Last_Update"], "%Y-%m-%d %H:%M:%S").strftime(
+        "%m/%d %H:%M"
+    )
+    title += f" {time_string}"
+
+    description = (
+        # f"[Last Update]: **{json["Last_Update"]}**\n" +
+        f"[Jobs Pending/Running]: **{json['Jobs']['Pending']}/{json['Jobs']['Running']}**\n"
+    )
     cpu_description = ""
     for node, cores in json["CPU_Cores"].items():
         cpu_description += f"[{node}]: **{cores['Used']}/{cores['Total']}**\n"
     gpu_description = ""
     for node, gpu in json["GPU"].items():
         gpu_description += f"[{node}]: **{gpu['Used']}/{gpu['Total']}**\n"
+
     embed = DiscordEmbed(title=title, description=description, color=242424)
     embed.add_embed_field(name="CPU Cores Used/Total", value=cpu_description)
     embed.add_embed_field(name="GPU Used/Total", value=gpu_description)
@@ -164,7 +172,7 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
                 print(f"{current_time}：首次請求, 通知中...")
                 last_status_json = current_status_json
                 status_embed = get_status_embed(
-                    current_status_json, title="NYCU HPC Initial Status"
+                    current_status_json, title="HPC Initial Status"
                 )
                 send_discord_notification(discord_webhook_url, status_embed)
             if compare_status_json(last_status_json, current_status_json):
@@ -173,10 +181,10 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
                 print(f"{current_time}：狀態已改變, 通知中...")
                 last_status_json = current_status_json
                 status_embed = get_status_embed(
-                    current_status_json, title="NYCU HPC Status Updated"
+                    current_status_json, title="HPC Updated"
                 )
                 send_discord_notification(discord_webhook_url, status_embed)
-            
+
             if err:
                 print(f"{current_time}: 警告: {err}")
 
@@ -187,7 +195,9 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
                 last_status_json = None
                 send_discord_notification(
                     discord_webhook_url,
-                    DiscordEmbed(title="Cannot Fetch HPC Status", color=15158332), # red
+                    DiscordEmbed(
+                        title="Cannot Fetch HPC Status", color=15158332
+                    ),  # red
                 )
 
         # 間隔一段時間再重新請求
