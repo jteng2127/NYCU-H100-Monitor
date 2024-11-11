@@ -192,11 +192,11 @@ def h100_pooling(
             # first time request
             if last_status_json is None:
                 print(f"{current_time}: 首次請求, 通知中...")
+                last_status_json = current_status_json
                 status_embed = get_status_embed(
                     current_status_json, title="HPC Initial Status"
                 )
                 send_discord_notification(discord_full_monitor_webhook_url, status_embed)
-
                 send_discord_notification(discord_gpu_monitor_webhook_url, status_embed)
 
             # get status embed
