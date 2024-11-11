@@ -22,7 +22,7 @@ def run_ssh_command(hostname, port, username, password, command):
         return stdout.read().decode(), stderr.read().decode()
 
     except Exception as e:
-        print(f"連接失敗：{e}")
+        print(f"連接失敗: {e}")
 
     finally:
         ssh_client.close()
@@ -33,9 +33,9 @@ def send_discord_notification(url, embed: DiscordEmbed):
     webhook.add_embed(embed)
     response = webhook.execute()
     if response.status_code == 200:
-        print(f"已通知：{embed.title}")
+        print(f"已通知: {url}")
     else:
-        print(f"通知失敗：{response.status_code}")
+        print(f"通知失敗: {response.status_code}")
 
 
 def is_valid_hpc_status(message):
@@ -111,51 +111,69 @@ def parse_status_message(message):
     return status_json
 
 
-def compare_status_json(json1, json2):
+def compare_status_json(json1, json2, ignore_fields=None):
     # 移除 Last_Update 欄位進行比較
-    json1_copy = {
-        key: value
-        for key, value in json1.items()
-        if key != "Last_Update" and key != "Jobs"
-    }
-    json2_copy = {
-        key: value
-        for key, value in json2.items()
-        if key != "Last_Update" and key != "Jobs"
-    }
+    json1_copy = json1.copy()
+    json2_copy = json2.copy()
+    for field in ignore_fields or []:
+        json1_copy.pop(field, None)
+        json2_copy.pop(field, None)
 
     # 比較兩個 JSON 是否相同
     return json1_copy == json2_copy
 
 
-def get_status_embed(json, title="HPC Status"):
-    time_string = datetime.strptime(json["Last_Update"], "%Y-%m-%d %H:%M:%S").strftime(
-        "%m/%d %H:%M"
-    )
-    title += f" {time_string}"
+def get_status_embed(status_json, last_status_json=None, title=None):
+    last_update = datetime.strptime(status_json["Last_Update"], "%Y-%m-%d %H:%M:%S")
 
-    description = (
-        # f"[Last Update]: **{json["Last_Update"]}**\n" +
-        f"[Jobs Pending/Running]: **{json['Jobs']['Pending']}/{json['Jobs']['Running']}**\n"
-    )
     cpu_description = ""
-    for node, cores in json["CPU_Cores"].items():
-        cpu_description += f"[{node}]: **{cores['Used']}/{cores['Total']}**\n"
-    gpu_description = ""
-    for node, gpu in json["GPU"].items():
-        gpu_description += f"[{node}]: **{gpu['Used']}/{gpu['Total']}**\n"
+    for node, cores in status_json["CPU_Cores"].items():
+        cpu_description += f"[{node}]: "
+        if last_status_json and node in last_status_json["CPU_Cores"]:
+            last_cores = last_status_json["CPU_Cores"][node]
+            if cores["Used"] != last_cores["Used"]:
+                cpu_description += f"**__{cores['Used']}__/{cores['Total']}**\n"
+            else:
+                cpu_description += f"**{cores['Used']}/{cores['Total']}**\n"
+        else:
+            cpu_description += f"**{cores['Used']}/{cores['Total']}**\n"
 
-    embed = DiscordEmbed(title=title, description=description, color=242424)
-    embed.add_embed_field(name="CPU Cores Used/Total", value=cpu_description)
+    gpu_description = ""
+    for node, gpu in status_json["GPU"].items():
+        gpu_description += f"[{node}]: "
+        if last_status_json and node in last_status_json["GPU"]:
+            last_gpu = last_status_json["GPU"][node]
+            if gpu["Used"] != last_gpu["Used"]:
+                gpu_description += f"**__{gpu['Used']}__/{gpu['Total']}**\n"
+            else:
+                gpu_description += f"**{gpu['Used']}/{gpu['Total']}**\n"
+        else:
+            gpu_description += f"**{gpu['Used']}/{gpu['Total']}**\n"
+
+    footer = f"[Jobs Pending/Running]: {status_json['Jobs']['Pending']}/{status_json['Jobs']['Running']}"
+
+    embed = DiscordEmbed(title=title, color=242424)
     embed.add_embed_field(name="GPU Used/Total", value=gpu_description)
+    embed.add_embed_field(name="CPU Used/Total", value=cpu_description)
+    embed.set_footer(text=footer)
+    embed.set_timestamp(last_update)
     return embed
 
 
-def h100_pooling(discord_webhook_url, hostname, port, username, password, interval=60):
+def h100_pooling(
+    discord_full_monitor_webhook_url,
+    discord_gpu_monitor_webhook_url,
+    hostname,
+    port,
+    username,
+    password,
+    interval=60,
+):
     last_status_json = None
     while True:
         current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         try:
+            # get current status
             out, err = run_ssh_command(
                 hostname=hostname,
                 port=port,
@@ -164,26 +182,44 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
                 command="hpcs",
             )
 
+            # is status valid
             if not is_valid_hpc_status(out):
-                print(f"{current_time}：無效的 HPC 狀態:\n{out}")
+                print(f"{current_time}: 無效的 HPC 狀態:\n{out}")
                 continue
             current_status_json = parse_status_message(out)
+            print(f"{current_time}: 狀態正常, 目前狀態:\n{out}")
+
+            # first time request
             if last_status_json is None:
-                print(f"{current_time}：首次請求, 通知中...")
-                last_status_json = current_status_json
+                print(f"{current_time}: 首次請求, 通知中...")
                 status_embed = get_status_embed(
                     current_status_json, title="HPC Initial Status"
                 )
-                send_discord_notification(discord_webhook_url, status_embed)
-            if compare_status_json(last_status_json, current_status_json):
-                print(f"{current_time}：狀態未改變, 目前狀態:\n{out}")
+                send_discord_notification(discord_full_monitor_webhook_url, status_embed)
+
+                send_discord_notification(discord_gpu_monitor_webhook_url, status_embed)
+
+            # get status embed
+            status_embed = get_status_embed(
+                current_status_json, last_status_json=last_status_json
+            )
+
+            # compare status (full monitor)
+            if compare_status_json(last_status_json, current_status_json, ignore_fields=["Last_Update"]):
+                print(f"{current_time} (full): 狀態未改變")
             else:
-                print(f"{current_time}：狀態已改變, 通知中...")
-                last_status_json = current_status_json
-                status_embed = get_status_embed(
-                    current_status_json, title="HPC Updated"
-                )
-                send_discord_notification(discord_webhook_url, status_embed)
+                print(f"{current_time} (full): 狀態已改變, 通知中...")
+                send_discord_notification(discord_full_monitor_webhook_url, status_embed)
+            
+            # compare status (gpu monitor)
+            if compare_status_json(last_status_json, current_status_json, ignore_fields=["Last_Update", "Jobs", "CPU_Cores"]):
+                print(f"{current_time} (gpu): 狀態未改變")
+            else:
+                print(f"{current_time} (gpu): 狀態已改變, 通知中...")
+                send_discord_notification(discord_gpu_monitor_webhook_url, status_embed)
+
+            # update last status
+            last_status_json = current_status_json
 
             if err:
                 print(f"{current_time}: 警告: {err}")
@@ -194,7 +230,7 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
                 print("通知中...")
                 last_status_json = None
                 send_discord_notification(
-                    discord_webhook_url,
+                    discord_full_monitor_webhook_url,
                     DiscordEmbed(
                         title="Cannot Fetch HPC Status", color=15158332
                     ),  # red
@@ -206,12 +242,20 @@ def h100_pooling(discord_webhook_url, hostname, port, username, password, interv
 
 if __name__ == "__main__":
     load_dotenv()
-    discord_webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+    discord_full_monitor_webhook_url = os.getenv("DISCORD_FULL_MONITOR_WEBHOOK_URL")
+    discord_gpu_monitor_webhook_url = os.getenv("DISCORD_GPU_MONITOR_WEBHOOK_URL")
     hostname = os.getenv("SSH_HOST")
     port = int(os.getenv("SSH_PORT"))
     username = os.getenv("SSH_USER")
     password = os.getenv("SSH_PASS")
-    h100_pooling(discord_webhook_url, hostname, port, username, password)
+    h100_pooling(
+        discord_full_monitor_webhook_url,
+        discord_gpu_monitor_webhook_url,
+        hostname,
+        port,
+        username,
+        password,
+    )
 
 """
 example json:
