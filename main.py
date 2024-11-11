@@ -4,7 +4,7 @@ import os
 import paramiko
 import time
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def run_ssh_command(hostname, port, username, password, command):
@@ -124,7 +124,9 @@ def compare_status_json(json1, json2, ignore_fields=None):
 
 
 def get_status_embed(status_json, last_status_json=None, title=None):
-    last_update = datetime.strptime(status_json["Last_Update"], "%Y-%m-%d %H:%M:%S")
+    last_update = datetime.strptime(
+        status_json["Last_Update"], "%Y-%m-%d %H:%M:%S"
+    ).astimezone(timezone.utc)
 
     cpu_description = ""
     for node, cores in status_json["CPU_Cores"].items():
@@ -196,7 +198,9 @@ def h100_pooling(
                 status_embed = get_status_embed(
                     current_status_json, title="HPC Initial Status"
                 )
-                send_discord_notification(discord_full_monitor_webhook_url, status_embed)
+                send_discord_notification(
+                    discord_full_monitor_webhook_url, status_embed
+                )
                 send_discord_notification(discord_gpu_monitor_webhook_url, status_embed)
 
             # get status embed
@@ -205,14 +209,22 @@ def h100_pooling(
             )
 
             # compare status (full monitor)
-            if compare_status_json(last_status_json, current_status_json, ignore_fields=["Last_Update"]):
+            if compare_status_json(
+                last_status_json, current_status_json, ignore_fields=["Last_Update"]
+            ):
                 print(f"{current_time} (full): 狀態未改變")
             else:
                 print(f"{current_time} (full): 狀態已改變, 通知中...")
-                send_discord_notification(discord_full_monitor_webhook_url, status_embed)
-            
+                send_discord_notification(
+                    discord_full_monitor_webhook_url, status_embed
+                )
+
             # compare status (gpu monitor)
-            if compare_status_json(last_status_json, current_status_json, ignore_fields=["Last_Update", "Jobs", "CPU_Cores"]):
+            if compare_status_json(
+                last_status_json,
+                current_status_json,
+                ignore_fields=["Last_Update", "Jobs", "CPU_Cores"],
+            ):
                 print(f"{current_time} (gpu): 狀態未改變")
             else:
                 print(f"{current_time} (gpu): 狀態已改變, 通知中...")
