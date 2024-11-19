@@ -123,7 +123,7 @@ def compare_status_json(json1, json2, ignore_fields=None):
     return json1_copy == json2_copy
 
 
-def get_status_embed(status_json, last_status_json=None, title=None):
+def get_status_embed(status_json, last_status_json=None, title=None, job_footer=True):
     last_update = datetime.strptime(
         status_json["Last_Update"], "%Y-%m-%d %H:%M:%S"
     ).astimezone(timezone.utc)
@@ -152,12 +152,27 @@ def get_status_embed(status_json, last_status_json=None, title=None):
         else:
             gpu_description += f"**{gpu['Used']}/{gpu['Total']}**\n"
 
+    job_discription = "[Jobs Pending/Running]: "
+    if (
+        last_status_json
+        and last_status_json["Jobs"]["Pending"] != status_json["Jobs"]["Pending"]
+    ):
+        job_discription += (
+            f"**__{status_json['Jobs']['Pending']}__**/{status_json['Jobs']['Running']}"
+        )
+    else:
+        job_discription += (
+            f"**{status_json['Jobs']['Pending']}**/{status_json['Jobs']['Running']}"
+        )
     footer = f"[Jobs Pending/Running]: {status_json['Jobs']['Pending']}/{status_json['Jobs']['Running']}"
 
     embed = DiscordEmbed(title=title, color=242424)
+    if job_footer:
+        embed.set_footer(text=footer)
+    else:
+        embed.add_embed_field(name="", value=job_discription, inline=False)
     embed.add_embed_field(name="GPU Used/Total", value=gpu_description)
     embed.add_embed_field(name="CPU Used/Total", value=cpu_description)
-    embed.set_footer(text=footer)
     embed.set_timestamp(last_update)
     return embed
 
@@ -165,6 +180,7 @@ def get_status_embed(status_json, last_status_json=None, title=None):
 def h100_pooling(
     discord_full_monitor_webhook_url,
     discord_gpu_monitor_webhook_url,
+    discord_zero_job_monitor_webhook_url,
     hostname,
     port,
     username,
@@ -198,10 +214,19 @@ def h100_pooling(
                 status_embed = get_status_embed(
                     current_status_json, title="HPC Initial Status"
                 )
+                job_status_embed = get_status_embed(
+                    current_status_json,
+                    last_status_json=last_status_json,
+                    title="HPC Initial Status",
+                    job_footer=False,
+                )
                 send_discord_notification(
                     discord_full_monitor_webhook_url, status_embed
                 )
                 send_discord_notification(discord_gpu_monitor_webhook_url, status_embed)
+                send_discord_notification(
+                    discord_zero_job_monitor_webhook_url, job_status_embed
+                )
 
             # get status embed
             status_embed = get_status_embed(
@@ -230,6 +255,26 @@ def h100_pooling(
                 print(f"{current_time} (gpu): 狀態已改變, 通知中...")
                 send_discord_notification(discord_gpu_monitor_webhook_url, status_embed)
 
+            # compare status (zero job monitor)
+            if (
+                last_status_json["Jobs"]["Pending"] == 0
+                and current_status_json["Jobs"]["Pending"] > 0
+            ) or (
+                last_status_json["Jobs"]["Pending"] > 0
+                and current_status_json["Jobs"]["Pending"] == 0
+            ):
+                print(f"{current_time} (zero job): 狀態已改變, 通知中...")
+                job_status_embed = get_status_embed(
+                    current_status_json,
+                    last_status_json=last_status_json,
+                    job_footer=False,
+                )
+                send_discord_notification(
+                    discord_zero_job_monitor_webhook_url, job_status_embed
+                )
+            else:
+                print(f"{current_time} (zero job): 狀態未改變")
+
             # update last status
             last_status_json = current_status_json
 
@@ -256,6 +301,9 @@ if __name__ == "__main__":
     load_dotenv()
     discord_full_monitor_webhook_url = os.getenv("DISCORD_FULL_MONITOR_WEBHOOK_URL")
     discord_gpu_monitor_webhook_url = os.getenv("DISCORD_GPU_MONITOR_WEBHOOK_URL")
+    discord_zero_job_monitor_webhook_url = os.getenv(
+        "DISCORD_ZERO_JOB_MONITOR_WEBHOOK_URL"
+    )
     hostname = os.getenv("SSH_HOST")
     port = int(os.getenv("SSH_PORT"))
     username = os.getenv("SSH_USER")
@@ -263,6 +311,7 @@ if __name__ == "__main__":
     h100_pooling(
         discord_full_monitor_webhook_url,
         discord_gpu_monitor_webhook_url,
+        discord_zero_job_monitor_webhook_url,
         hostname,
         port,
         username,
