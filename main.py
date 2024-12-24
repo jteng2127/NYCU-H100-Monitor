@@ -44,30 +44,39 @@ def is_valid_hpc_status(message):
 
     # 檢查每個部分
     if lines[0] != "===== NYCU HPC Status =====":
+        print(1)
         return False
 
     if lines[1] != "[ Last Update ]":
+        print(2)
         return False
 
     if not re.match(r"Time: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", lines[2]):
+        print(3)
         return False
 
     if lines[3] != "[ Jobs Pending/Running ]":
+        print(4)
         return False
 
     if not re.match(r"Count: \d+/\d+", lines[4]):
+        print(5)
         return False
 
     if lines[5] != "[ CPU Cores Used/Total ]":
+        print(6)
         return False
 
-    if not all(re.match(r"DGX-CN\d+: \d+/\d+", line) for line in lines[6:8]):
+    if not all(re.match(r"DGX-.*\d+: \d+/\d+", line) for line in lines[6:9]):
+        print(7)
         return False
 
-    if lines[8] != "[ GPU Used/Total ]":
+    if lines[9] != "[ GPU Used/Total ]":
+        print(8)
         return False
 
-    if not all(re.match(r"DGX-CN\d+: \d+/\d+", line) for line in lines[9:11]):
+    if not all(re.match(r"DGX-.*\d+: \d+/\d+", line) for line in lines[10:13]):
+        print(9)
         return False
 
     # 所有檢查都通過，則格式正確
@@ -89,14 +98,14 @@ def parse_status_message(message):
     cpu_section = message.split("[ CPU Cores Used/Total ]")[1].split(
         "[ GPU Used/Total ]"
     )[0]
-    cpu_matches = re.findall(r"(DGX-CN\d+): (\d+)/(\d+)", cpu_section)
+    cpu_matches = re.findall(r"(DGX-.*\d+): (\d+)/(\d+)", cpu_section)
     for node, used, total in cpu_matches:
         cpu_cores[node] = {"Used": int(used), "Total": int(total)}
 
     # 提取 GPU 資訊
     gpu = {}
     gpu_section = message.split("[ GPU Used/Total ]")[1]
-    gpu_matches = re.findall(r"(DGX-CN\d+): (\d+)/(\d+)", gpu_section)
+    gpu_matches = re.findall(r"(DGX-.*\d+): (\d+)/(\d+)", gpu_section)
     for node, used, total in gpu_matches:
         gpu[node] = {"Used": int(used), "Total": int(total)}
 
@@ -203,6 +212,7 @@ def h100_pooling(
             # is status valid
             if not is_valid_hpc_status(out):
                 print(f"{current_time}: 無效的 HPC 狀態:\n{out}")
+                time.sleep(interval)
                 continue
             current_status_json = parse_status_message(out)
             print(f"{current_time}: 狀態正常, 目前狀態:\n{out}")
@@ -316,6 +326,7 @@ if __name__ == "__main__":
         port,
         username,
         password,
+        interval=60*10,
     )
 
 """
